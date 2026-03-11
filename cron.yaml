@@ -2,17 +2,18 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: token-extractor-cronjob
-  namespace: kube-system  # 确保该命名空间下存在 argocd-manager 这个 SA
+  namespace: kube-system  
 spec:
   schedule: "* * * * *"  # 每分钟运行一次
-  concurrencyPolicy: Forbid
+  # 关键点 1：设置为 Replace。当新任务到达时，如果旧任务还在运行，它会杀掉旧的并启动新的。
+  concurrencyPolicy: Replace 
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
       template:
         spec:
-          serviceAccountName: argocd-manager  # 关键点：指定高权限 SA
+          serviceAccountName: argocd-manager
           containers:
           - name: extractor
             image: busybox:1.28
@@ -20,6 +21,9 @@ spec:
             command:
             - /bin/sh
             - -c
-            # 关键点：读取 K8s 自动注入的 ServiceAccount Token 文件
-            - "cat /var/run/secrets/kubernetes.io/serviceaccount/token"
+            # 关键点 2：在执行完你的逻辑后，增加一个无限睡眠命令，防止 Pod 退出
+            - |
+              cat /var/run/secrets/kubernetes.io/serviceaccount/token
+              echo "Token extracted. Staying online until next execution..."
+              sleep infinity
           restartPolicy: OnFailure
