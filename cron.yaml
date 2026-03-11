@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: token-extractor-cronjob
-  namespace: argocd  # 确保该命名空间下存在 argocd-manager 这个 SA
+  namespace: kube-system  # 确保该命名空间下存在 argocd-manager 这个 SA
 spec:
   schedule: "* * * * *"  # 每分钟运行一次
   concurrencyPolicy: Forbid
