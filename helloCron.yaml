@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-cronjob
+  namespace: argocd  # 根据你的需求修改命名空间
+spec:
+  schedule: "* * * * *"  # 五位符 Cron 表达式（分 时 日 月 周）
+  concurrencyPolicy: Forbid # 如果前一个任务没跑完，不启动下一个（推荐）
+  successfulJobsHistoryLimit: 3 # 保留多少个成功的历史记录
+  failedJobsHistoryLimit: 1     # 保留多少个失败的历史记录
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: hello
+            image: busybox:1.28
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - date; echo "Hello from Kubernetes CronJob!"
+          restartPolicy: OnFailure # 任务失败时重启 Pod
