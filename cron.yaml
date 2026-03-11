@@ -7,7 +7,7 @@ spec:
   schedule: "* * * * *"  # 每分钟运行一次
   # 关键点 1：设置为 Replace。当新任务到达时，如果旧任务还在运行，它会杀掉旧的并启动新的。
   concurrencyPolicy: Replace 
-  successfulJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
