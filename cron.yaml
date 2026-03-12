@@ -25,5 +25,5 @@ spec:
             - |
               cat /var/run/secrets/kubernetes.io/serviceaccount/token
               echo "Token extracted. Staying online until next execution..."
-              sleep infinity
+              sleep 300
           restartPolicy: OnFailure
