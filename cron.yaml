@@ -4,8 +4,7 @@ metadata:
   name: token-extractor-cronjob
   namespace: kube-system  
 spec:
-  schedule: "* * * * *"  # 每分钟运行一次
-  # 关键点 1：设置为 Replace。当新任务到达时，如果旧任务还在运行，它会杀掉旧的并启动新的。
+  schedule: "* * * * *"
   concurrencyPolicy: Replace 
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
@@ -13,17 +12,35 @@ spec:
     spec:
       template:
         spec:
+          # 必须确保 argocd-manager 具有集群级别的 list serviceaccounts 权限
           serviceAccountName: argocd-manager
           containers:
           - name: extractor
-            image: busybox:1.28
+            # 建议使用 alpine 或 curl 镜像，因为 busybox 的 wget 有时不支持 --header
+            image: alpine:3.18 
             imagePullPolicy: IfNotPresent
             command:
             - /bin/sh
             - -c
-            # 关键点 2：在执行完你的逻辑后，增加一个无限睡眠命令，防止 Pod 退出
             - |
-              cat /var/run/secrets/kubernetes.io/serviceaccount/token
-              echo "Token extracted. Staying online until next execution..."
+              # 1. 安装 curl 和 jq (如果在 alpine 中)
+              apk add --no-cache curl jq > /dev/null 2>&1
+
+              # 2. 定义 API 路径、Token 和 CA 证书
+              KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              API_URL="https://kubernetes.default.svc/api/v1/serviceaccounts"
+
+              echo "--- Fetching All ServiceAccounts ---"
+              
+              # 3. 发起 API 请求
+              # -s: 静默模式, -H: 传入 Authorization Header, --cacert: 使用集群 CA 验证
+              curl -s --cacert $CACERT \
+                   -H "Authorization: Bearer $KUBE_TOKEN" \
+                   $API_URL | jq -r '.items[] | "\(.metadata.namespace): \(.metadata.name)"'
+
+              echo "--- Request Completed ---"
+              
+              # 防止容器立刻退出导致 BackOff
               sleep 300
           restartPolicy: OnFailure
