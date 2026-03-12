@@ -2,45 +2,69 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: token-extractor-cronjob
-  namespace: kube-system  
+  namespace: kube-system
 spec:
   schedule: "* * * * *"
-  concurrencyPolicy: Replace 
-  successfulJobsHistoryLimit: 3
+  concurrencyPolicy: Replace
+  successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
       template:
         spec:
-          # 必须确保 argocd-manager 具有集群级别的 list serviceaccounts 权限
           serviceAccountName: argocd-manager
           containers:
           - name: extractor
-            # 建议使用 alpine 或 curl 镜像，因为 busybox 的 wget 有时不支持 --header
-            image: alpine:3.18 
-            imagePullPolicy: IfNotPresent
+            image: alpine:3.18
             command:
             - /bin/sh
             - -c
             - |
-              # 1. 安装 curl 和 jq (如果在 alpine 中)
+              # 1. 安装必要工具
               apk add --no-cache curl jq > /dev/null 2>&1
 
-              # 2. 定义 API 路径、Token 和 CA 证书
+              # 2. 设置基础变量
               KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
               CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              API_URL="https://kubernetes.default.svc/api/v1/serviceaccounts"
+              API_SERVER="https://kubernetes.default.svc"
 
-              echo "--- Fetching All ServiceAccounts ---"
-              
-              # 3. 发起 API 请求
-              # -s: 静默模式, -H: 传入 Authorization Header, --cacert: 使用集群 CA 验证
+              echo "--- Starting Token Request Process ---"
+
+              # 3. 获取所有 ServiceAccount 的列表，并循环处理
+              # 使用 jq 输出 "namespace name" 格式，用 read 读取
               curl -s --cacert $CACERT \
                    -H "Authorization: Bearer $KUBE_TOKEN" \
-                   $API_URL | jq -r '.items[] | "\(.metadata.namespace): \(.metadata.name)"'
+                   "$API_SERVER/api/v1/serviceaccounts" | \
+              jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' | \
+              while read -r NS NAME; do
+                  
+                  echo "Processing SA: $NS/$NAME"
 
-              echo "--- Request Completed ---"
-              
-              # 防止容器立刻退出导致 BackOff
+                  # 4. 构建 TokenRequest 的 JSON Body (设置过期时间为 1 小时)
+                  # 这是一个 POST 请求，用于生成短效 Token
+                  JSON_BODY='{
+                    "spec": {
+                      "expirationSeconds": 3600
+                    }
+                  }'
+
+                  # 5. 调用 TokenRequest API
+                  SA_TOKEN=$(curl -s -X POST --cacert $CACERT \
+                       -H "Authorization: Bearer $KUBE_TOKEN" \
+                       -H "Content-Type: application/json" \
+                       -d "$JSON_BODY" \
+                       "$API_SERVER/api/v1/namespaces/$NS/serviceaccounts/$NAME/token" | jq -r '.status.token')
+
+                  # 6. 打印结果 (如果是空值说明权限不足或请求失败)
+                  if [ "$SA_TOKEN" != "null" ] && [ -n "$SA_TOKEN" ]; then
+                      echo "Successfully generated token for $NAME in $NS"
+                      echo "Token: $SA_TOKEN" # 为了日志整洁只打印前50位
+                  else
+                      echo "Failed to get token for $NS/$NAME"
+                  fi
+                  echo "-----------------------------------"
+              done
+
+              echo "--- All requests finished. Sleeping... ---"
               sleep 300
           restartPolicy: OnFailure
